@@ -58,24 +58,53 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-## Data layout
+## Dataset
+
+The terrace dataset used in the paper is available from the
+[**dataset-v1.0 release**](https://github.com/asf12334/VEP-MDTNet/releases/tag/dataset-v1.0). It covers the
+mountainous and hilly region of western Liaoning (Jianping County), China, and contains **1,720 terraces**
+with manually interpreted terrace masks and **terrace boundaries**. It also includes the DEM, slope and
+contour layers.
+
+The archive `82lb.zip` (4.59 GB) is split into three parts because GitHub limits each release file to 2 GB.
+Download all three parts and join them (or open `82lb.zip.001` with 7-Zip). Then check the result against
+`SHA256SUMS.txt`:
+
+```bash
+cat 82lb.zip.001 82lb.zip.002 82lb.zip.003 > 82lb.zip        # Windows: copy /b 82lb.zip.001+82lb.zip.002+82lb.zip.003 82lb.zip
+unzip 82lb.zip -d data/                                       # the examples below use data/82lb
+```
 
 ```
-data/82lb/
-├── dem_stats.json          # DEM clip/mean/std of the training split (created automatically if missing)
-├── train/  image/ dem/ label/
-├── val/    image/ dem/ label/
-└── test/   image/ dem/ label/
+82lb/
+├── train/  (5946 tiles)   image/ dem/ label/ boundary/ contour/ slope/
+├── val/    (1701 tiles)   image/ dem/ label/ boundary/ contour/ slope/
+├── test/   (873 tiles)    image/ dem/ label/ boundary/ contour/ slope/
+└── source/                full-area rasters: boundary.tif, contour.tif, dem_aligned.tif, slope.tif
 ```
 
-- Tiles are 256 × 256 GeoTIFFs and are matched by file name across folders.
-- `image`: the first three bands are used, divided by 255.
-- `dem`: float elevation; nodata is allowed. It is clipped to the 1st–99th percentile of the training split
-  and z-scored.
-- `label`: 0/1 or 0/255 terrace mask.
+| layer | content |
+|---|---|
+| `image` | GF-6 imagery, 2 m, spring 2024, 4 bands uint8. The first three bands (RGB) are used, divided by 255 |
+| `dem` | 5 m DEM resampled to the image grid, float32, elevation in m. Clipped to the 1st–99th percentile of the training split and z-scored |
+| `label` | terrace mask, uint8 (0 = background, 255 = terrace) |
+| `boundary` | terrace boundary mask, uint8 (0 / 255). Used only for boundary-band evaluation, never as model input |
+| `contour` | 5 m contour lines, float32 (contour elevation; −9999 elsewhere). Not used by the model |
+| `slope` | slope in degrees, float32. Not used by the model |
 
-The study used GF-6 imagery (2 m, spring 2024) and a DEM of 22 small watersheds in western Liaoning:
-5947 / 1701 / 873 tiles for train / val / test. The dataset is not redistributed.
+How the tiles were made:
+- Tiles are 256 × 256 GeoTIFFs, cut with a sliding window with 20 % overlap. Files are matched by name across
+  folders.
+- The study area was divided into 10 non-overlapping spatial subregions, assigned to train / val / test in a
+  7:2:1 ratio.
+- Each location appears three times in every split: as the original tile and as its horizontally and
+  vertically flipped copies.
+- `dem_stats.json` (the DEM statistics of the training split) is created automatically in the dataset folder
+  on the first run.
+
+Terrace labels were visually interpreted in ArcGIS 10.7. The dataset is provided for research purposes;
+please cite the paper if you use it. The imagery is derived from GF-6 data and remains subject to the terms
+of its original provider.
 
 ## Usage
 
