@@ -6,16 +6,38 @@ hilly region of western Liaoning, China**.
 VEP-MDTNet segments terraces from co-registered high-resolution RGB imagery and a DEM. It is a U-Net-style
 network with four parts:
 
-- **Two independent ResNet-50 encoders** for RGB and DEM. The RGB encoder uses deformable convolutions
-  (DCN) in stages 3–5.
-- **Virtual-branch fusion.** A virtual branch fuses the two modalities stage by stage:
-  `V_n = (φ_R(R_n) + φ_D(D_n)) / 2 + F_n(Concat[φ_R(R_n), φ_D(D_n), B_n(φ_V(V_{n-1}))])`.
-- **E-P Skip Gate.** From each virtual feature V_n, the edge guidance response `E_n` and the patch region
-  response `P_n` are predicted. Together with the upsampled decoder feature `U_n` they give the gating
-  coefficient `η_n = σ(Conv1×1(Concat[V_n, U_n, E_n, P_n]))`, which filters the skip feature.
-- **MDT (multi-scale deformable Transformer).** Built from multi-scale deformable attention (MSDA) over
-  V1/V3/V5, with 4 encoder and 2 decoder layers and V3' as the queries. Its output `F_MDT` is fused into
-  decoder stage D3.
+**Two independent ResNet-50 encoders** extract RGB and DEM features. The RGB encoder uses deformable
+convolutions (DCN) in stages 3–5.
+
+**Virtual-branch fusion.** A virtual branch fuses the two modalities stage by stage. At stage $`n \geq 2`$:
+
+```math
+V_n=\frac{\phi_n^{R}(R_n)+\phi_n^{D}(D_n)}{2}+\mathcal{F}_n\left(\mathrm{Concat}\left[\phi_n^{R}(R_n),\ \phi_n^{D}(D_n),\ B_n\left(\phi_n^{V_{n-1}}(V_{n-1})\right)\right]\right)
+```
+
+$`R_n`$ and $`D_n`$ are the RGB and DEM encoder features. $`\phi`$ are 1×1 convolutions with group
+normalization (GN) and SiLU, and $`B_n`$ is bilinear interpolation. $`\mathcal{F}_n`$ is a residual
+mapping of two 3×3 convolutions, each followed by GN, with SiLU after the first. Stage 1 has no
+$`V_{n-1}`$ term.
+
+**E-P Skip Gate.** For each skip connection, the edge guidance response $`E_n`$ and the patch region
+response $`P_n`$ are predicted from the virtual feature $`V_n`$. Together with the upsampled decoder
+feature $`U_n`$, they give the gating coefficient $`\eta_n`$, which filters the skip feature:
+
+```math
+\begin{aligned}
+E_n &= \sigma\left(\mathrm{Conv}_{1\times1}\left[\mathrm{SiLU}\left(\mathrm{GN}\left(\mathrm{Conv}_{3\times3}(V_n)\right)\right)\right]\right), \qquad
+P_n = \sigma\left(\mathrm{Conv}_{1\times1}(V_n)\right),\\
+\eta_n &= \sigma\left(\mathrm{Conv}_{1\times1}\left(\mathrm{Concat}[V_n,U_n,E_n,P_n]\right)\right), \qquad
+\tilde{V}_n = \eta_n \odot V_n,\\
+F_n^{\mathrm{skip}} &= \mathrm{Conv}_{3\times3}\left(\mathrm{Conv}_{3\times3}\left(\mathrm{Concat}[U_n,\tilde{V}_n,E_n,P_n]\right)\right)
+\end{aligned}
+```
+
+**MDT (multi-scale deformable Transformer).** The MDT is built from multi-scale deformable attention
+(MSDA). The MDT encoder (4 layers) relates $`V_1`$, $`V_3`$ and $`V_5`$. The MDT decoder (2 layers) uses
+the encoded $`V_3'`$ as queries and produces $`F_{\mathrm{MDT}}`$, which is fused into decoder stage
+$`D_3`$.
 
 ```
 RGB ─ ResNet-50 (DCN in stages 3-5) ─┐
