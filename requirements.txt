@@ -1,0 +1,9 @@
+# PyTorch / torchvision: install the build matching your CUDA version first (see README)
+torch>=1.12
+torchvision>=0.13
+numpy
+opencv-python
+# GDAL is easiest to install with conda: conda install -c conda-forge gdal
+gdal
+tqdm
+matplotlib

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# data, checkpoints and outputs stay local
+data/
+checkpoints/
+runs/
+results/
+outputs/
+*.pt
+*.pth
+*.npz
