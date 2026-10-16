@@ -1,3 +1,5 @@
+"""Multi-scale deformable attention (MSDA, paper Eq. msda) and the MDT encoder / decoder layers."""
+
 from __future__ import annotations
 
 import math
@@ -64,8 +66,12 @@ def sine_position_encoding(level: Tensor, hidden_dim: int) -> Tensor:
     return position[None].expand(level.size(0), -1, -1)
 
 
-class MultiScaleDeformableAttention(nn.Module):
-    """Pure-PyTorch multiscale deformable attention using grid_sample."""
+class MSDA(nn.Module):
+    """Multi-scale deformable attention in pure PyTorch (grid_sample).
+
+    Each of the M heads samples K points around the reference point on each of
+    the L levels (offsets Delta p_mlqk, weights A_mlqk normalised over L*K).
+    """
 
     def __init__(
         self,
@@ -202,7 +208,9 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-class MSDeformEncoderLayer(nn.Module):
+class MDTEncoderLayer(nn.Module):
+    """MDT encoder layer: optional local 3x3 conv per level, MSDA self-attention, FFN."""
+
     def __init__(
         self,
         dim: int,
@@ -221,7 +229,7 @@ class MSDeformEncoderLayer(nn.Module):
             else [nn.Identity() for _ in range(levels)]
         )
         self.norm1 = nn.LayerNorm(dim)
-        self.attention = MultiScaleDeformableAttention(dim, heads, levels, points)
+        self.attention = MSDA(dim, heads, levels, points)
         self.dropout = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(dim)
         self.ffn = FeedForward(dim, ffn_dim, dropout)
@@ -246,7 +254,9 @@ class MSDeformEncoderLayer(nn.Module):
         return split_levels(source, shapes)
 
 
-class MSDeformDecoderLayer(nn.Module):
+class MDTDecoderLayer(nn.Module):
+    """MDT decoder layer: query self-attention, MSDA cross-attention to the V1/V3/V5 memory, FFN."""
+
     def __init__(
         self,
         dim: int,
@@ -262,9 +272,7 @@ class MSDeformDecoderLayer(nn.Module):
             dim, heads, dropout=dropout, batch_first=True
         )
         self.norm2 = nn.LayerNorm(dim)
-        self.cross_attention = MultiScaleDeformableAttention(
-            dim, heads, levels, points
-        )
+        self.cross_attention = MSDA(dim, heads, levels, points)
         self.norm3 = nn.LayerNorm(dim)
         self.ffn = FeedForward(dim, ffn_dim, dropout)
         self.dropout = nn.Dropout(dropout)

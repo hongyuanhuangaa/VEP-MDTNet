@@ -8,8 +8,8 @@ from torch import Tensor, nn
 from torchvision.ops import deform_conv2d
 
 
-class ModulatedDeformConvPack(nn.Module):
-    """Drop-in DCNv2 replacement for a pretrained nn.Conv2d.
+class DCNv2(nn.Module):
+    """Modulated deformable convolution (DCN) replacing a pretrained nn.Conv2d.
 
     Offsets start at zero. The modulation mask starts close to one so replacing
     a pretrained ResNet conv does not halve its activation at initialization.
@@ -97,11 +97,11 @@ def replace_bottleneck_conv2(
     for index in indices:
         block = stage[index]
         conv2 = getattr(block, "conv2", None)
-        if isinstance(conv2, ModulatedDeformConvPack):
+        if isinstance(conv2, DCNv2):
             continue
         if not isinstance(conv2, nn.Conv2d):
             raise TypeError(f"Expected Bottleneck.conv2 to be Conv2d, got {type(conv2)}")
-        block.conv2 = ModulatedDeformConvPack(
+        block.conv2 = DCNv2(
             conv2,
             initial_mask=initial_mask,
             force_fp32=force_fp32,

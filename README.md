@@ -6,15 +6,16 @@ hilly region of western Liaoning, China**.
 VEP-MDTNet segments terraces from co-registered high-resolution RGB imagery and a DEM. It is a U-Net-style
 network with four parts:
 
-- **Two independent ResNet-50 encoders** for RGB and DEM. The RGB encoder uses modulated deformable
-  convolutions (DCNv2) in stages 3–5.
-- **Virtual-branch fusion.** A third, *virtual* stream fuses the two modalities stage by stage. Each stage
-  averages the projected RGB and DEM features and adds a learned residual computed from
-  `[R̂, D̂, upsampled V(n-1)]`.
-- **E-P Skip Gate.** Every skip connection is gated by `η = σ(Conv1×1([skip, up, E, P]))`. E is an edge
-  (boundary) response and P a patch (region) response, both predicted from the skip feature.
-- **MDT (multi-scale deformable Transformer).** Multi-scale deformable attention runs over V1/V3/V5 (4 encoder
-  and 2 decoder layers, V3 as queries). Its output is injected into decoder stage D3.
+- **Two independent ResNet-50 encoders** for RGB and DEM. The RGB encoder uses deformable convolutions
+  (DCN) in stages 3–5.
+- **Virtual-branch fusion.** A virtual branch fuses the two modalities stage by stage:
+  `V_n = (φ_R(R_n) + φ_D(D_n)) / 2 + F_n(Concat[φ_R(R_n), φ_D(D_n), B_n(φ_V(V_{n-1}))])`.
+- **E-P Skip Gate.** From each virtual feature V_n, the edge guidance response `E_n` and the patch region
+  response `P_n` are predicted. Together with the upsampled decoder feature `U_n` they give the gating
+  coefficient `η_n = σ(Conv1×1(Concat[V_n, U_n, E_n, P_n]))`, which filters the skip feature.
+- **MDT (multi-scale deformable Transformer).** Built from multi-scale deformable attention (MSDA) over
+  V1/V3/V5, with 4 encoder and 2 decoder layers and V3' as the queries. Its output `F_MDT` is fused into
+  decoder stage D3.
 
 ```
 RGB ─ ResNet-50 (DCN in stages 3-5) ─┐
@@ -25,8 +26,8 @@ DEM ─ ResNet-50 ────────────────────�
 ## Installation
 
 The code was developed with Python 3.8, PyTorch 2.4.1 / torchvision 0.19.1 (CUDA 12.1) and GDAL 3.0. Any
-PyTorch ≥ 1.12 with torchvision ≥ 0.13 should work. No custom CUDA operators are needed: DCNv2 uses
-`torchvision.ops.deform_conv2d`, and deformable attention is written in plain PyTorch.
+PyTorch ≥ 1.12 with torchvision ≥ 0.13 should work. No custom CUDA operators are needed: DCN uses
+`torchvision.ops.deform_conv2d`, and MSDA is written in plain PyTorch.
 
 ```bash
 conda create -n vepmdt python=3.8 gdal -c conda-forge
@@ -92,9 +93,9 @@ Every model variant of the paper is a preset (`--preset`):
 
 When a module is removed it falls back as follows:
 
-- E/P → zero maps
-- gate → an ordinary U-Net skip
-- MDT → a 1×1 projection of V5
+- E / P → zero maps
+- E-P Skip Gate → an ordinary U-Net skip connection
+- MDT → no F_MDT (the decoder still starts from the projected V5)
 - DCN → the plain ResNet 3×3 convolution
 
 ### Testing
@@ -133,16 +134,17 @@ logits = model(torch.rand(1, 3, 256, 256), torch.randn(1, 1, 256, 256))   # (1, 
 
 ```
 vepmdtnet/          model package
-  config.py           VFEMRTConfig: all architecture switches
+  config.py           VEPMDTNetConfig: all architecture switches
   presets.py          the paper's model variants
-  model.py            dual-modal network (RecursiveVirtualEMRTNet)
+  model.py            VEPMDTNet
   single_modality.py  RGB-only / DEM-only variants
-  encoder.py          two ResNet-50 streams + virtual branch
-  virtual_branch.py   recursive virtual-branch fusion
-  deformable.py       DCNv2 (torchvision deform_conv2d)
-  guidance.py         E and P heads
-  decoder.py          E-P Skip Gate decoder
-  bridge.py           MDT bridge (msdeform_transformer.py: deformable attention)
+  encoder.py          DualEncoder: RGB and DEM ResNet-50 encoders + virtual branch
+  virtual_branch.py   VirtualBranchStage (phi_R, phi_D, phi_V, F_n)
+  dcn.py              DCNv2 (torchvision deform_conv2d)
+  ep_skip_gate.py     EdgeGuidanceHead (E), PatchRegionHead (P), EPSkipGate (eta)
+  decoder.py          decoder D4..D1, F_MDT fused at D3
+  mdt.py              MDT
+  msda.py             MSDA and the MDT encoder / decoder layers
   losses.py           0.3 BCE + 0.7 Dice
   data.py             tile dataset and DEM normalization
   checkpoint.py       loading with the stored architecture
@@ -150,9 +152,8 @@ vepmdtnet/          model package
 train.py  test.py  predict.py
 ```
 
-Internal names: the MDT is called *EMRT* / *msdeform bridge* in the code, and the model class is
-`RecursiveVirtualEMRTNet`. These names are kept so that checkpoints saved during the study still load
-(`vepmdtnet.checkpoint` also resolves the old package name `vf_emrt`).
+Checkpoints written with the development version of the code (package `vf_emrt`, module names such as
+`bridge` / `guidance`) are converted to the current names automatically by `vepmdtnet.checkpoint`.
 
 ## Citation
 

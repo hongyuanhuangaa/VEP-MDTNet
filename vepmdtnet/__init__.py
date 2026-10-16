@@ -1,29 +1,30 @@
 """VEP-MDTNet: dual-modal (RGB + DEM) terrace extraction network.
 
-Code names used inside the package (kept so that existing checkpoints load):
+Paper component -> code:
 
-    paper term                         code
-    ---------------------------------  -------------------------------------------
-    VEP-MDTNet                         RecursiveVirtualEMRTNet / VFEMRTConfig
-    virtual-branch fusion              virtual_branch.RecursiveVirtualStage
-    DCN in RGB stages 3-5              deformable.ModulatedDeformConvPack
-    edge (E) / patch (P) guidance      guidance.VirtualSkipGuidance
-    E-P Skip Gate                      decoder.GuidedSkipDecoderBlock
-    MDT (multi-scale deformable        bridge.MultiscaleDeformableBridge
-         Transformer)                  ("EMRT" / "msdeform" in config fields)
+    VEP-MDTNet                        model.VEPMDTNet, config.VEPMDTNetConfig
+    RGB / DEM encoders (ResNet50)     encoder.DualEncoder.rgb_encoder / .dem_encoder
+    DCN in RGB stages 3-5             dcn.DCNv2
+    virtual branch, V_n               virtual_branch.VirtualBranchStage
+    edge guidance response E_n        ep_skip_gate.EdgeGuidanceHead
+    patch region response P_n         ep_skip_gate.PatchRegionHead
+    E-P Skip Gate, eta_n              ep_skip_gate.EPSkipGate
+    MSDA                              msda.MSDA
+    MDT (encoder / decoder), F_MDT    mdt.MDT (msda.MDTEncoderLayer / MDTDecoderLayer)
+    decoder D4..D1 (F_MDT fused at D3) decoder.Decoder
 """
 
-from .config import VFEMRTConfig
+from .config import VEPMDTNetConfig
 from .losses import MainSegmentationLoss
-from .model import RecursiveVirtualEMRTNet, build_model
-from .single_modality import SingleModalityEMRTNet
+from .model import VEPMDTNet, build_model
+from .single_modality import SingleModalityVEPMDTNet
 from .single_modality import build_model as build_single_modality_model
 
 __all__ = [
-    "VFEMRTConfig",
+    "VEPMDTNetConfig",
     "MainSegmentationLoss",
-    "RecursiveVirtualEMRTNet",
-    "SingleModalityEMRTNet",
+    "VEPMDTNet",
+    "SingleModalityVEPMDTNet",
     "build_model",
     "build_single_modality_model",
 ]

@@ -9,81 +9,53 @@ from torch import Tensor, nn
 from .blocks import ConvGNAct
 
 
-class RecursiveVirtualStage(nn.Module):
-    """One strictly feed-forward virtual stage.
+class VirtualBranchStage(nn.Module):
+    """One stage n of the virtual branch (paper Eq. vb).
 
-    The real RGB and DEM tensors are never modified.  At every stage the
-    current RGB/DEM projections form both the stable average baseline and the
-    modality-aware part of the residual input.  From stage two onward, the
-    previous virtual feature is resized to the current resolution and appended
-    to that residual input.  Thus the implemented recurrence is
+    The RGB and DEM encoder features are never modified.  phi_R and phi_D project
+    R_n and D_n to the virtual width; their average is the baseline, and the
+    residual mapping F_n (two 3x3 convolutions) is computed from
+    Concat[phi_R(R_n), phi_D(D_n), B_n(phi_V(V_{n-1}))]:
 
-        V_n = 0.5 * (R_n_hat + D_n_hat)
-              + f_n([R_n_hat, D_n_hat, resize(V_{n-1})]).
+        V_n = 0.5 * (phi_R(R_n) + phi_D(D_n)) + F_n([...]),
 
-    ``previous_rgb_channels`` and ``previous_dem_channels`` remain in the
-    constructor only for compatibility with older callers and component tests;
-    previous real-stream features are intentionally not used.
+    where the V_{n-1} term is absent at stage 1.  When the virtual branch is
+    disabled, V_n is the projected average or, with ``use_concat_fusion``, a 1x1
+    Conv-GN-SiLU of the concatenated projections.
     """
 
     def __init__(
         self,
         stage_index: int,
-        current_rgb_channels: int,
-        current_dem_channels: int,
+        rgb_channels: int,
+        dem_channels: int,
         virtual_channels: int,
-        previous_rgb_channels: Optional[int] = None,
-        previous_dem_channels: Optional[int] = None,
-        previous_virtual_channels: Optional[int] = None,
+        prev_virtual_channels: Optional[int] = None,
         use_previous_virtual: bool = True,
-        use_direct_concat_fusion: bool = False,
+        use_concat_fusion: bool = False,
         zero_init_residual: bool = True,
     ) -> None:
         super().__init__()
         self.stage_index = stage_index
         self.use_previous_virtual = use_previous_virtual and stage_index > 1
-        self.use_direct_concat_fusion = use_direct_concat_fusion
-        self.current_rgb_projection = ConvGNAct(
-            current_rgb_channels, virtual_channels, 1
-        )
-        self.current_dem_projection = ConvGNAct(
-            current_dem_channels, virtual_channels, 1
-        )
-        self.direct_concat_fusion = (
+        self.rgb_projection = ConvGNAct(rgb_channels, virtual_channels, 1)        # phi_R
+        self.dem_projection = ConvGNAct(dem_channels, virtual_channels, 1)        # phi_D
+        self.concat_fusion = (
             ConvGNAct(2 * virtual_channels, virtual_channels, 1)
-            if use_direct_concat_fusion
+            if use_concat_fusion
             else None
         )
-
-        # Kept as legacy constructor arguments so older callers do not break.
-        # The revised residual is conditioned on current RGB/DEM features,
-        # rather than redundantly re-reading previous real-stream features.
-        _ = previous_rgb_channels, previous_dem_channels
-
-        if stage_index == 1:
-            residual_sources = 2
-            self.previous_rgb_projection = None
-            self.previous_dem_projection = None
-            self.previous_virtual_projection = None
-        else:
-            self.previous_rgb_projection = None
-            self.previous_dem_projection = None
-            self.previous_virtual_projection = (
-                ConvGNAct(previous_virtual_channels, virtual_channels, 1)
-                if self.use_previous_virtual and previous_virtual_channels is not None
-                else None
-            )
-            residual_sources = 2 + int(self.previous_virtual_projection is not None)
-
-        self.residual_conv1 = ConvGNAct(
-            residual_sources * virtual_channels,
-            virtual_channels,
-            3,
-            stride=1,
+        self.prev_virtual_projection = (                                          # phi_V
+            ConvGNAct(prev_virtual_channels, virtual_channels, 1)
+            if self.use_previous_virtual and prev_virtual_channels is not None
+            else None
         )
-        self.residual_conv2 = ConvGNAct(
-            virtual_channels, virtual_channels, 3, activate=False
-        )
+        residual_sources = 2 + int(self.prev_virtual_projection is not None)
+
+        # F_n: 3x3 Conv-GN-SiLU, then 3x3 Conv-GN; the last GN starts at zero so
+        # that V_n initially equals the average of the projections.
+        self.residual_conv1 = ConvGNAct(residual_sources * virtual_channels, virtual_channels, 3)
+        self.residual_conv2 = ConvGNAct(virtual_channels, virtual_channels, 3, activate=False)
         if zero_init_residual:
             nn.init.zeros_(self.residual_conv2.norm.weight)
             nn.init.zeros_(self.residual_conv2.norm.bias)
@@ -98,47 +70,30 @@ class RecursiveVirtualStage(nn.Module):
 
     def forward(
         self,
-        current_rgb: Tensor,
-        current_dem: Tensor,
-        previous_rgb: Optional[Tensor] = None,
-        previous_dem: Optional[Tensor] = None,
-        previous_virtual: Optional[Tensor] = None,
-        enable_residual: bool = True,
+        rgb: Tensor,
+        dem: Tensor,
+        prev_virtual: Optional[Tensor] = None,
+        use_residual: bool = True,
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
-        current_dem = self._align(current_dem, current_rgb)
-        rgb_base = self.current_rgb_projection(current_rgb)
-        dem_base = self.current_dem_projection(current_dem)
-        average = 0.5 * (rgb_base + dem_base)
+        dem = self._align(dem, rgb)
+        rgb_proj = self.rgb_projection(rgb)
+        dem_proj = self.dem_projection(dem)
+        average = 0.5 * (rgb_proj + dem_proj)
 
-        if not enable_residual:
+        if not use_residual:
             residual = torch.zeros_like(average)
             virtual = (
-                self.direct_concat_fusion(
-                    torch.cat([rgb_base, dem_base], dim=1)
-                )
-                if self.direct_concat_fusion is not None
+                self.concat_fusion(torch.cat([rgb_proj, dem_proj], dim=1))
+                if self.concat_fusion is not None
                 else average
             )
         else:
-            if self.stage_index == 1:
-                residual_input = torch.cat([rgb_base, dem_base], dim=1)
-            else:
-                # Current real features describe the present semantic level;
-                # V_{n-1} contributes only the recursively fused history.
-                sources = [rgb_base, dem_base]
-                if self.previous_virtual_projection is not None:
-                    if previous_virtual is None:
-                        raise ValueError("previous_virtual is required by this stage")
-                    previous_virtual_aligned = self.previous_virtual_projection(
-                        previous_virtual
-                    )
-                    previous_virtual_aligned = self._align(
-                        previous_virtual_aligned, average
-                    )
-                    sources.append(previous_virtual_aligned)
-                residual_input = torch.cat(sources, dim=1)
-
-            residual = self.residual_conv2(self.residual_conv1(residual_input))
+            sources = [rgb_proj, dem_proj]
+            if self.prev_virtual_projection is not None:
+                if prev_virtual is None:
+                    raise ValueError("V_{n-1} is required by this stage")
+                sources.append(self._align(self.prev_virtual_projection(prev_virtual), average))
+            residual = self.residual_conv2(self.residual_conv1(torch.cat(sources, dim=1)))
             residual = self._align(residual, average)
             virtual = average + residual
         return virtual, {"average": average, "residual": residual}

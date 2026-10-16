@@ -6,7 +6,7 @@ corresponding row of the paper's tables:
     preset     paper row                               fusion     DCN  MDT  E  P  gate
     ---------  --------------------------------------  ---------  ---  ---  -  -  ----
     full       VEP-MDTNet (Full)                       virtual     1    1   1  1   1
-    base       Base (Table 3)                          concat      0    0   0  0   0
+    base       Base (Table 2)                          concat      0    0   0  0   0
     wo_vb      w/o Virtual Branch = Average fusion     average     1    1   1  1   1
     concat     Concatenation fusion (Table 5)          concat      1    1   1  1   1
     wo_mdt     w/o MDT                                 virtual     1    0   1  1   1
@@ -19,17 +19,17 @@ corresponding row of the paper's tables:
 
 "virtual" is the recursive virtual-branch fusion, "average" the projected RGB/DEM mean and
 "concat" a projected concatenation followed by a learnable 1x1 Conv-GN-SiLU.  Disabled
-modules fall back to: zero E/P maps, an ordinary (ungated) U-Net skip, a 1x1 projection of
-V5 instead of the MDT, and the plain ResNet-50 3x3 convolutions instead of DCNv2.
-The single-modality variants keep one encoder only (no fusion branch) and were trained
-with E guidance and the skip gate but without P guidance.
+modules fall back to: zero E / P maps, an ordinary (ungated) U-Net skip, no F_MDT (the
+decoder still starts from the projected V5), and the plain ResNet-50 3x3 convolutions
+instead of DCN.  The single-modality variants keep one encoder only (no virtual branch)
+and were trained with E and the E-P Skip Gate but without P.
 """
 
 from __future__ import annotations
 
 from typing import Dict, Tuple
 
-from .config import VFEMRTConfig
+from .config import VEPMDTNetConfig
 
 #               fusion     dcn    mdt    e      p      gate   modality
 _TABLE = {
@@ -66,48 +66,45 @@ def make_config(
     image_channels: int = 3,
     terrain_channels: int = 1,
     num_classes: int = 2,
-) -> Tuple[VFEMRTConfig, str]:
+) -> Tuple[VEPMDTNetConfig, str]:
     """Return ``(config, modality)`` for a preset; modality is rgbdem, rgb or dem."""
     s = preset_switches(name)
-    recursive = s["fusion"] == "virtual"
+    virtual = s["fusion"] == "virtual"
     dcn = bool(s["dcn"]) and s["modality"] != "dem"   # DCN only exists in the RGB encoder
     mdt = bool(s["mdt"])
-    config = VFEMRTConfig(
+    config = VEPMDTNetConfig(
         num_classes=num_classes,
         input_size=tuple(input_size),
         image_channels=image_channels,
         terrain_channels=terrain_channels,
         pretrained=pretrained,
         virtual_channels=(64, 128, 256, 384, 512),
-        use_virtual_residual=recursive,
-        virtual_residual_stages=(1, 2, 3, 4, 5) if recursive else (),
-        use_previous_virtual=recursive,
-        use_direct_concat_fusion=s["fusion"] == "concat",
+        use_virtual_branch=virtual,
+        virtual_branch_stages=(1, 2, 3, 4, 5) if virtual else (),
+        use_previous_virtual=virtual,
+        use_concat_fusion=s["fusion"] == "concat",
         use_rgb_dcn=dcn,
         rgb_dcn_stages=(3, 4, 5) if dcn else (),
         rgb_dcn_mode="all",
         force_fp32_dcn=dcn,
-        use_msdeform_bridge=mdt,
-        use_msdeform_encoder=mdt,
-        use_msdeform_decoder=mdt,
-        use_bridge_local_conv=mdt,
-        use_emrt_decoder_refinement=mdt,
-        emrt_v1_encoder_stride=2,
-        emrt_refine_channels=256,
-        emrt_inject_stage=3,
-        bridge_hidden_dim=256,
-        bridge_heads=8,
-        bridge_points=6,
-        bridge_encoder_layers=4,
-        bridge_decoder_layers=2,
-        bridge_ffn_dim=1024,
-        use_gated_emrt_residual=False,
+        use_mdt=mdt,
+        use_mdt_encoder=mdt,
+        use_mdt_decoder=mdt,
+        use_mdt_local_conv=mdt,
+        use_mdt_injection=mdt,
+        mdt_v1_stride=2,
+        mdt_out_channels=256,
+        mdt_inject_stage=3,
+        mdt_dim=256,
+        mdt_heads=8,
+        mdt_points=6,
+        mdt_encoder_layers=4,
+        mdt_decoder_layers=2,
+        mdt_ffn_dim=1024,
         use_e_guidance=bool(s["e"]),
         use_p_guidance=bool(s["p"]),
-        use_skip_gate=bool(s["gate"]),
-        use_carafe=False,
+        use_ep_skip_gate=bool(s["gate"]),
         use_final_refine=True,
-        use_deep_supervision=False,
         return_aux=False,
         force_fp32_tail=True,
     )
