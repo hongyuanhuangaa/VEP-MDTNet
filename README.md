@@ -61,7 +61,7 @@ pip install -r requirements.txt
 ## Dataset
 
 The terrace dataset used in the paper is available from the
-[**dataset-v1.0 release**](https://github.com/asf12334/VEP-MDTNet/releases/tag/dataset-v1.0). It covers the
+[**dataset-v1.0 release**](https://github.com/hongyuanhuangaa/VEP-MDTNet/releases/tag/dataset-v1.0). It covers the
 mountainous and hilly region of western Liaoning (Jianping County), China, and contains **1,720 terraces**
 with manually interpreted terrace masks and **terrace boundaries**. It also includes the DEM, slope and
 contour layers.
