@@ -73,7 +73,6 @@ Defaults reproduce the paper's protocol:
 | Loss | 0.3 BCE + 0.7 Dice |
 | Schedule | 100 epochs, no early stopping. The checkpoint with the best validation mIoU is kept |
 | Augmentation | Random flips and 90° rotations, plus a synchronized RGB/DEM/mask CutMix. Its probability adapts to the validation-mIoU trend within [0.1, 0.4] |
-| Initialization | ImageNet weights (torchvision `IMAGENET1K_V1`) for both encoders. The 1-channel DEM stem is the mean of the RGB stem |
 
 Each run writes `runs/<preset>/best.pt`, `train_log.txt`, `history.json` and `curves.png`.
 
